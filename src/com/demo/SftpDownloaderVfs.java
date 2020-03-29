@@ -1,10 +1,15 @@
 package com.demo;
 
-import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Predicate;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.vfs2.FileObject;
 import org.apache.commons.vfs2.FileSystemException;
 import org.apache.commons.vfs2.FileSystemOptions;
@@ -13,92 +18,25 @@ import org.apache.commons.vfs2.impl.StandardFileSystemManager;
 import org.apache.commons.vfs2.provider.sftp.SftpFileSystemConfigBuilder;
 
 public class SftpDownloaderVfs {
+	static final List<String> fileNames = Arrays.asList(DownloaderProps.getPropertyValues("fileNames"));
+	static final String folderNamePrefix = "app";
+	static final String[] fileNamesStartsWith = new String[] {
+			// "Debug.log",
+			// "UserEntry.log"
+	};
 
 	public static void main(String args[]) throws IOException {
-		String remoteFile = "app2/Debug.log";
-		String remotePath = "/your/remote/";
-		String remoteHost = "10.20.40.153";
-		String username = "<your-username>";
-		String password = "<yourpassword>";
-		String localPath = "C:/logs/";
+		String remotePath = DownloaderProps.getPropertyValue("remotePath");
+		String remoteHost = DownloaderProps.getPropertyValue("remoteHost");
+		String username = DownloaderProps.getPropertyValue("username");
+		String password = DownloaderProps.getPropertyValue("password");
+		String localPath = System.getProperty("user.home") + "/Documents/qa8/";
 
-		exist(remoteHost, username, password, remotePath + remoteFile);
-		download(remoteHost, username, password, localPath, remotePath, remoteFile);
-
-	}
-
-	/**
-	 * Method to upload a file in Remote server
-	 * 
-	 * @param hostName       HostName of the server
-	 * @param username       UserName to login
-	 * @param password       Password to login
-	 * @param localFilePath  LocalFilePath. Should contain the entire local file
-	 *                       path - Directory and Filename with \\ as separator
-	 * @param remoteFilePath remoteFilePath. Should contain the entire remote file
-	 *                       path - Directory and Filename with / as separator
-	 */
-	public static void upload(String hostName, String username, String password, String localFilePath,
-			String remoteFilePath) {
-
-		File file = new File(localFilePath);
-		if (!file.exists())
-			throw new RuntimeException("Error. Local file not found");
-
-		StandardFileSystemManager manager = new StandardFileSystemManager();
-
-		try {
-			manager.init();
-
-			// Create local file object
-			FileObject localFile = manager.resolveFile(file.getAbsolutePath());
-
-			// Create remote file object
-			FileObject remoteFile = manager.resolveFile(
-					createConnectionString(hostName, username, password, remoteFilePath), createDefaultOptions());
-			/*
-			 * use createDefaultOptions() in place of fsOptions for all default options -
-			 * Ashok.
-			 */
-
-			// Copy local file to sftp server
-			remoteFile.copyFrom(localFile, Selectors.SELECT_SELF);
-
-			System.out.println("File upload success");
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		} finally {
-			manager.close();
-		}
-	}
-
-	public static boolean move(String hostName, String username, String password, String remoteSrcFilePath,
-			String remoteDestFilePath) {
-		StandardFileSystemManager manager = new StandardFileSystemManager();
-
-		try {
-			manager.init();
-
-			// Create remote object
-			FileObject remoteFile = manager.resolveFile(
-					createConnectionString(hostName, username, password, remoteSrcFilePath), createDefaultOptions());
-			FileObject remoteDestFile = manager.resolveFile(
-					createConnectionString(hostName, username, password, remoteDestFilePath), createDefaultOptions());
-
-			if (remoteFile.exists()) {
-				remoteFile.moveTo(remoteDestFile);
-				;
-				System.out.println("Move remote file success");
-				return true;
-			} else {
-				System.out.println("Source file doesn't exist");
-				return false;
-			}
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		} finally {
-			manager.close();
-		}
+		long startTime = System.currentTimeMillis();
+		download(remoteHost, username, password, localPath, remotePath);
+		long endTime = System.currentTimeMillis();
+		
+		System.out.println("That took " + (endTime - startTime) + " milliseconds");
 	}
 
 	/**
@@ -113,100 +51,71 @@ public class SftpDownloaderVfs {
 	 *                       path - Directory and Filename with / as separator
 	 */
 	public static void download(String hostName, String username, String password, String localFilePath,
-			String remoteFilePath, String remoteFileName) {
-
+			String remoteFilePath) {
 		StandardFileSystemManager manager = new StandardFileSystemManager();
+		
+		Function<FileObject, FileObject[]> findFiles = folder -> {
+			try {
+				return folder.findFiles(Selectors.SELECT_CHILDREN);
+			} catch (FileSystemException e1) {
+				throw new RuntimeException(e1);
+			}
+		};
+
+		Predicate<FileObject> isFolder = folder -> {
+			try {
+				return folder.isFolder();
+			} catch (FileSystemException e1) {
+				throw new RuntimeException(e1);
+			}
+		};
+
+		Predicate<FileObject> isFile = file -> {
+			try {
+				return file.isFile();
+			} catch (FileSystemException e1) {
+				throw new RuntimeException(e1);
+			}
+		};
+		
+		Predicate<FileObject> fileNameContains = file -> fileNames.contains(file.getName().getBaseName());
+
+		Predicate<FileObject> folderNameStartsWith = folder -> StringUtils.startsWith(folder.getName().getBaseName(),
+				folderNamePrefix);
+
+		Predicate<FileObject> fileNameStartsWith = file -> StringUtils.startsWithAny(file.getName().getBaseName(),
+				fileNamesStartsWith);
+
+		Consumer<FileObject> downloadFile = file -> {
+			try {
+				String fileName = folderNamePrefix
+						+ StringUtils.substringAfterLast(file.getName().getPath(), folderNamePrefix);
+				FileObject localFile = manager.resolveFile(localFilePath + fileName);
+				localFile.copyFrom(file, Selectors.SELECT_SELF);
+				System.out.println(fileName + " >>>> Downloaded");
+
+			} catch (FileSystemException e) {
+				throw new RuntimeException(e);
+			}
+		};
 
 		try {
 			manager.init();
-
-			// Append _downlaod_from_sftp to the given file name.
-			// String downloadFilePath = localFilePath.substring(0,
-			// localFilePath.lastIndexOf(".")) + "_downlaod_from_sftp" +
-			// localFilePath.substring(localFilePath.lastIndexOf("."),
-			// localFilePath.length());
-
-			// Create local file object. Change location if necessary for new
-			// downloadFilePath
-			FileObject localFile = manager.resolveFile(localFilePath+remoteFileName);
 
 			// Create remote file object
-			FileObject remoteFile = manager.resolveFile(
-					createConnectionString(hostName, username, password, remoteFilePath + remoteFileName),
-					createDefaultOptions());
-
-			// Copy local file to sftp server
-			localFile.copyFrom(remoteFile, Selectors.SELECT_SELF);
-
-			System.out.println("File download success");
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		} finally {
-			manager.close();
-		}
-	}
-
-	/**
-	 * Method to delete the specified file from the remote system
-	 * 
-	 * @param hostName       HostName of the server
-	 * @param username       UserName to login
-	 * @param password       Password to login
-	 * @param localFilePath  LocalFilePath. Should contain the entire local file
-	 *                       path - Directory and Filename with \\ as separator
-	 * @param remoteFilePath remoteFilePath. Should contain the entire remote file
-	 *                       path - Directory and Filename with / as separator
-	 */
-	public static void delete(String hostName, String username, String password, String remoteFilePath) {
-		StandardFileSystemManager manager = new StandardFileSystemManager();
-
-		try {
-			manager.init();
-
-			// Create remote object
-			FileObject remoteFile = manager.resolveFile(
+			FileObject remoteRootFolder = manager.resolveFile(
 					createConnectionString(hostName, username, password, remoteFilePath), createDefaultOptions());
 
-			if (remoteFile.exists()) {
-				remoteFile.delete();
-				System.out.println("Delete remote file success");
-			}
+			Arrays.stream(remoteRootFolder.findFiles(Selectors.SELECT_CHILDREN))
+					.filter(isFolder.and(folderNameStartsWith)).map(findFiles).flatMap(files -> Arrays.stream(files))
+					.filter(isFile.and(fileNameContains).or(fileNameStartsWith)).parallel().forEach(downloadFile);
+
 		} catch (Exception e) {
 			throw new RuntimeException(e);
 		} finally {
 			manager.close();
 		}
-	}
 
-	// Check remote file is exist function:
-	/**
-	 * Method to check if the remote file exists in the specified remote location
-	 * 
-	 * @param hostName       HostName of the server
-	 * @param username       UserName to login
-	 * @param password       Password to login
-	 * @param remoteFilePath remoteFilePath. Should contain the entire remote file
-	 *                       path - Directory and Filename with / as separator
-	 * @return Returns if the file exists in the specified remote location
-	 */
-	public static boolean exist(String hostName, String username, String password, String remoteFilePath) {
-		StandardFileSystemManager manager = new StandardFileSystemManager();
-
-		try {
-			manager.init();
-
-			// Create remote object
-			FileObject remoteFile = manager.resolveFile(
-					createConnectionString(hostName, username, password, remoteFilePath), createDefaultOptions());
-
-			System.out.println("File exist: " + remoteFile.exists());
-
-			return remoteFile.exists();
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		} finally {
-			manager.close();
-		}
 	}
 
 	/**
@@ -250,7 +159,7 @@ public class SftpDownloaderVfs {
 		SftpFileSystemConfigBuilder.getInstance().setUserDirIsRoot(opts, false);
 
 		// Timeout is count by Milliseconds
-		SftpFileSystemConfigBuilder.getInstance().setTimeout(opts, 10000);
+		SftpFileSystemConfigBuilder.getInstance().setSessionTimeoutMillis(opts, 10000);
 
 		return opts;
 	}

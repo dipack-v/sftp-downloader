@@ -17,14 +17,16 @@ public class SftpDownloader2 {
 	static ChannelSftp sftpChannel = null;
 
 	public static void main(String args[]) throws IOException {
-		String remotePath = "<your-remote-path>";
-		String filename = "Debug.log";
-		String host = "<hostname>";
-		String username = "<username>";
-		String password = "<password>";
+		String remotePath = DownloaderProps.getPropertyValue("remotePath");
+		String remoteHost = DownloaderProps.getPropertyValue("remoteHost");
+		String username = DownloaderProps.getPropertyValue("username");
+		String password = DownloaderProps.getPropertyValue("password");
+
+		String filename = "app2/Debug.log";
 
 		try {
-			connect(host, username, password);
+			long startTime = System.currentTimeMillis();
+			connect(remoteHost, username, password);
 			InputStream stream = sftpChannel.get(remotePath + filename);
 
 			try {
@@ -38,7 +40,8 @@ public class SftpDownloader2 {
 				System.out.println("Exception 2 " + e.getMessage());
 			}
 			disconnect();
-
+			long endTime = System.currentTimeMillis();
+			System.out.println("That took " + (endTime - startTime) + " milliseconds");
 			System.out.println(" >>>>>>>> Completed !");
 		} catch (SftpException e) {
 			e.printStackTrace();
